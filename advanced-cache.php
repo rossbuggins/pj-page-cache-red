@@ -16,6 +16,9 @@ class Redis_Page_Cache {
 	private static $redis_db = 0;
 	private static $redis_auth = '';
 
+	private static $checkCookies = true;
+	private static $checkPageNoCache = true;
+
 	private static $ttl = 300;
 	private static $max_ttl = 3600;
 	private static $unique = array();
@@ -64,7 +67,7 @@ class Redis_Page_Cache {
 		}
 
 		// Some things just don't need to be cached.
-		if ( self::maybe_bail() )
+		if ( self::maybe_bail(self::$checkCookies, self::$checkPageNoCache) )
 			return;
 
 		// Clean up request variables.
@@ -351,10 +354,11 @@ class Redis_Page_Cache {
 		}
 	}
 
+
 	/**
 	 * Check some conditions where pages should never be cached or served from cache.
 	 */
-	private static function maybe_bail() {
+	private static function maybe_bail($checkCookies = true, $checkPageNoCache = false, $checkUserLoggedIn= false) {
 
 		// Allow an external configuration file to append to the bail method.
 		if ( self::$bail_callback && is_callable( self::$bail_callback ) ) {
@@ -374,16 +378,34 @@ class Redis_Page_Cache {
 		if ( self::$ttl < 1 )
 			return true;
 
-		foreach ( $_COOKIE as $key => $value ) {
-			$key = strtolower( $key );
+        if($checkPageNoCache){
+            if(defined('DONOTCACHEPAGE'))
+            {
+                if(DONOTCACHEPAGE)
+                {
+                    return true;
+                }
 
-			// Don't cache anything if these cookies are set.
-			foreach ( array( 'wp', 'wordpress', 'comment_author' ) as $part ) {
-				if ( strpos( $key, $part ) === 0 && ! in_array( $key, self::$ignore_cookies ) ) {
-					return true;
-				}
-			}
-		}
+            }
+        }
+
+        if($checkUserLoggedIn)
+        {
+
+        }
+
+        if($checkCookies) {
+            foreach ($_COOKIE as $key => $value) {
+                $key = strtolower($key);
+
+                // Don't cache anything if these cookies are set.
+                foreach (array('wp', 'wordpress', 'comment_author') as $part) {
+                    if (strpos($key, $part) === 0 && !in_array($key, self::$ignore_cookies)) {
+                        return true;
+                    }
+                }
+            }
+        }
 
 		return false; // Don't bail.
 	}
