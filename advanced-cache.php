@@ -6,9 +6,9 @@
  * enable page caching in your wp-config.php.
  */
 
-//if ( ! defined( 'ABSPATH' ) )
-  //  die();
+if ( ! defined( 'ABSPATH' ) )
+  die();
 
-//include("plugins/pj-page-cache-red/redis-page-cache.php");
+include("plugins/pj-page-cache-red/redis-page-cache.php");
 
-//Redis_Page_Cache::cache_init();
+Redis_Page_Cache::cache_init();
