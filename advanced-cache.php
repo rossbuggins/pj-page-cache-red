@@ -19,6 +19,8 @@ class Redis_Page_Cache {
 	private static $checkCookies = true;
 	private static $checkPageNoCache = true;
 
+	private static $rb = true;
+	
 	private static $ttl = 300;
 	private static $max_ttl = 3600;
 	private static $unique = array();
