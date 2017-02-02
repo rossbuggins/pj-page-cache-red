@@ -11,16 +11,18 @@ if ( ! defined( 'ABSPATH' ) )
 
 class Redis_Page_Cache {
 	private static $redis;
-	private static $redis_host = '127.0.0.1';
-	private static $redis_port = 6379;
+	private static $redis_host = '';
+	private static $redis_port = 0;
 	private static $redis_db = 0;
 	private static $redis_auth = '';
 
-	private static $checkCookies = true;
+	private static $checkCookies = false;
 	private static $checkPageNoCache = true;
-
+	private static $checkUserLoggedIn = false;
+	private static $checkAdmin = true;
+	private static $checkIfUserIsAdmin = true;
 	private static $rb = true;
-	
+
 	private static $ttl = 300;
 	private static $max_ttl = 3600;
 	private static $unique = array();
@@ -29,7 +31,7 @@ class Redis_Page_Cache {
 	private static $ignore_request_keys = array( 'utm_source', 'utm_medium', 'utm_term', 'utm_content', 'utm_campaign' );
 	private static $whitelist_cookies = null;
 	private static $bail_callback = false;
-	private static $debug = false;
+	private static $debug = true;
 	private static $gzip = true;
 
 	private static $lock = false;
@@ -51,6 +53,7 @@ class Redis_Page_Cache {
 		register_shutdown_function( array( __CLASS__, 'maybe_clear_caches' ) );
 
 		header( 'X-Pj-Cache-Status: miss' );
+		header( 'X-Pj-Cache-Status-Reason: none' );
 
 		if ( function_exists( 'add_action' ) ) {
 			add_action( 'clean_post_cache', array( __CLASS__, 'clean_post_cache' ) );
@@ -69,8 +72,10 @@ class Redis_Page_Cache {
 		}
 
 		// Some things just don't need to be cached.
-		if ( self::maybe_bail(self::$checkCookies, self::$checkPageNoCache) )
+		if ( self::maybe_bail() ) {
+			header( 'X-Pj-Cache-Status-Bail: preCheck' );
 			return;
+		}
 
 		// Clean up request variables.
 		self::clean_request();
@@ -360,54 +365,82 @@ class Redis_Page_Cache {
 	/**
 	 * Check some conditions where pages should never be cached or served from cache.
 	 */
-	private static function maybe_bail($checkCookies = true, $checkPageNoCache = false, $checkUserLoggedIn= false) {
+	private static function maybe_bail() {
 
 		// Allow an external configuration file to append to the bail method.
 		if ( self::$bail_callback && is_callable( self::$bail_callback ) ) {
 			$callback_result = call_user_func( self::$bail_callback );
 			if ( is_bool( $callback_result ) )
-				return $callback_result;
+				header( 'X-Pj-Cache-Status-Bail-Reason: callback' );
+			return $callback_result;
 		}
 
 		// Don't cache CLI requests
-		if ( php_sapi_name() == 'cli' )
+		if ( php_sapi_name() == 'cli' ) {
+			header('X-Pj-Cache-Status-Bail-Reason: cli');
 			return true;
+		}
 
 		// Don't cache POST requests.
-		if ( strtolower( $_SERVER['REQUEST_METHOD'] ) == 'post' )
+		if ( strtolower( $_SERVER['REQUEST_METHOD'] ) == 'post' ) {
+			header( 'X-Pj-Cache-Status-Bail-Reason: post' );
 			return true;
+		}
 
-		if ( self::$ttl < 1 )
+		if ( self::$ttl < 1 ) {
+			header( 'X-Pj-Cache-Status-Bail-Reason: ttl' );
 			return true;
+		}
 
-        if($checkPageNoCache){
-            if(defined('DONOTCACHEPAGE'))
-            {
-                if(DONOTCACHEPAGE)
-                {
-                    return true;
-                }
+		if(self::$checkPageNoCache){
+			if(defined('DONOTCACHEPAGE'))
+			{
+				if(DONOTCACHEPAGE)
+				{
+					header( 'X-Pj-Cache-Status-Bail-Reason: donotcachepage' );
+					return true;
+				}
+			}
+		}
 
-            }
-        }
+		if(self::$checkIfUserIsAdmin)
+		{
+			if(function_exists(wp_get_current_user)) {
+				$current_user = wp_get_current_user();
+				if (user_can($current_user, 'administrator')) {
+					header('X-Pj-Cache-Status-Bail-Reason: userisadmin');
+					return true;
+				}
+			}
+		}
 
-        if($checkUserLoggedIn)
-        {
+		if(self::$checkAdmin) {
+			if (is_admin()) {
+				header( 'X-Pj-Cache-Status-Bail-Reason: admin' );
+				return true;
+			}
+		}
 
-        }
+		if(self::$checkUserLoggedIn)
+		{
+			if ( is_user_logged_in() )
+				header( 'X-Pj-Cache-Bail-Reason: loggedin' );
+			return true;
+		}
 
-        if($checkCookies) {
-            foreach ($_COOKIE as $key => $value) {
-                $key = strtolower($key);
+		if(self::$checkCookies) {
+			foreach ($_COOKIE as $key => $value) {
+				$key = strtolower($key);
 
-                // Don't cache anything if these cookies are set.
-                foreach (array('wp', 'wordpress', 'comment_author') as $part) {
-                    if (strpos($key, $part) === 0 && !in_array($key, self::$ignore_cookies)) {
-                        return true;
-                    }
-                }
-            }
-        }
+				// Don't cache anything if these cookies are set.
+				foreach (array('wp', 'wordpress', 'comment_author') as $part) {
+					if (strpos($key, $part) === 0 && !in_array($key, self::$ignore_cookies)) {
+						header( 'X-Pj-Cache-Bail-Reason: cookies' );
+						return true;
+					}
+				}
+			}
+		}
 
 		return false; // Don't bail.
 	}
@@ -448,7 +481,13 @@ class Redis_Page_Cache {
 	 * Runs when the output buffer stops.
 	 */
 	public static function output_buffer( $output ) {
+
 		$cache = true;
+
+		if ( self::maybe_bail()) {
+			header( 'X-Pj-Cache-Status-Bail: postCheck' );
+			$cache = false;
+		}
 
 		$data = array(
 			'output' => $output,
